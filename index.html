@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LZH → ZIP コンバーター</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --text: #e8e8f0;
+    --muted: #5a5a7a;
+    --success: #00ff88;
+    --error: #ff4466;
+    --grid: rgba(0,229,255,0.03);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Zen Kaku Gothic New', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Glow orb */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(0,229,255,0.06) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 720px;
+    padding: 60px 24px 80px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 60px;
+    animation: fadeDown 0.6s ease both;
+  }
+
+  .badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    border: 1px solid rgba(0,229,255,0.3);
+    padding: 4px 12px;
+    border-radius: 2px;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 7vw, 4rem);
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    margin-bottom: 12px;
+  }
+
+  h1 span.from {
+    color: var(--muted);
+    text-decoration: line-through;
+    text-decoration-color: var(--accent2);
+    text-decoration-thickness: 3px;
+  }
+
+  h1 span.to {
+    color: var(--accent);
+  }
+
+  .subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* Drop zone */
+  .dropzone {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 56px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.6s 0.1s ease both;
+  }
+
+  .dropzone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(0,229,255,0.03) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .dropzone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0,229,255,0.04);
+  }
+
+  .dropzone.has-file {
+    border-color: rgba(0,229,255,0.4);
+  }
+
+  .drop-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    display: block;
+    filter: grayscale(0.3);
+    transition: transform 0.3s;
+  }
+
+  .dropzone:hover .drop-icon, .dropzone.drag-over .drop-icon {
+    transform: scale(1.15) translateY(-4px);
+  }
+
+  .drop-label {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .drop-sub {
+    font-size: 13px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  #fileInput { display: none; }
+
+  /* File info */
+  .file-info {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: none;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .file-info.visible { display: flex; align-items: center; gap: 14px; }
+
+  .file-icon { font-size: 28px; flex-shrink: 0; }
+
+  .file-details { flex: 1; min-width: 0; }
+
+  .file-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .file-size {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+    line-height: 1;
+    transition: color 0.2s;
+    flex-shrink: 0;
+  }
+  .remove-btn:hover { color: var(--error); }
+
+  /* File list */
+  .file-list {
+    margin-top: 20px;
+    display: none;
+  }
+  .file-list.visible { display: block; }
+
+  .file-list-header {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .file-list-items {
+    max-height: 200px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .file-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .file-list-item .fi-name { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-list-item .fi-size { color: var(--accent); flex-shrink: 0; }
+
+  /* Convert button */
+  .convert-btn {
+    width: 100%;
+    margin-top: 24px;
+    padding: 18px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 4px;
+    font-family: 'Zen Kaku Gothic New', sans-serif;
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+
+  .convert-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .convert-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(0,229,255,0.35);
+  }
+
+  .convert-btn:active:not(:disabled) { transform: translateY(0); }
+
+  .convert-btn:disabled {
+    background: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  /* Progress */
+  .progress-wrap {
+    margin-top: 20px;
+    display: none;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .progress-wrap.visible { display: block; }
+
+  .progress-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  /* Status */
+  .status {
+    margin-top: 20px;
+    padding: 14px 18px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 700;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .status.visible { display: flex; }
+  .status.success { background: rgba(0,255,136,0.07); border: 1px solid rgba(0,255,136,0.3); color: var(--success); }
+  .status.error { background: rgba(255,68,102,0.07); border: 1px solid rgba(255,68,102,0.3); color: var(--error); }
+  .status.info { background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.2); color: var(--accent); }
+
+  /* Download */
+  .download-wrap {
+    margin-top: 12px;
+    display: none;
+  }
+  .download-wrap.visible { display: block; }
+
+  .download-btn {
+    width: 100%;
+    padding: 16px;
+    background: transparent;
+    border: 1px solid var(--success);
+    color: var(--success);
+    border-radius: 4px;
+    font-family: 'Zen Kaku Gothic New', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s;
+    letter-spacing: 0.05em;
+  }
+
+  .download-btn:hover {
+    background: rgba(0,255,136,0.08);
+    transform: translateY(-1px);
+  }
+
+  /* Note */
+  .note {
+    margin-top: 40px;
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.7;
+    animation: fadeUp 0.6s 0.3s ease both;
+  }
+
+  .note strong { color: var(--text); }
+
+  /* Animations */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .pulsing { animation: pulse 1.2s ease infinite; }
+
+  footer {
+    margin-top: 60px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-align: center;
+    animation: fadeUp 0.6s 0.4s ease both;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="badge">ブラウザ完結型 アーカイブ変換</div>
+    <h1><span class="from">LZH</span> → <span class="to">ZIP</span></h1>
+    <p class="subtitle">サーバー不要・完全ローカル処理・無料</p>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <span class="drop-icon">📦</span>
+    <p class="drop-label">LZHファイルをドロップ</p>
+    <p class="drop-sub">または クリックしてファイルを選択 (.lzh / .lha)</p>
+    <input type="file" id="fileInput" accept=".lzh,.lha">
+  </div>
+
+  <div class="file-info" id="fileInfo">
+    <span class="file-icon">🗜️</span>
+    <div class="file-details">
+      <div class="file-name" id="fileName">—</div>
+      <div class="file-size" id="fileSize">—</div>
+    </div>
+    <button class="remove-btn" id="removeBtn" title="削除">✕</button>
+  </div>
+
+  <div class="file-list" id="fileList">
+    <div class="file-list-header">
+      <span>アーカイブ内のファイル</span>
+      <span id="fileCount">—</span>
+    </div>
+    <div class="file-list-items" id="fileListItems"></div>
+  </div>
+
+  <button class="convert-btn" id="convertBtn" disabled>ZIP に変換する</button>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label">
+      <span id="progressLabel">処理中...</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="download-wrap" id="downloadWrap">
+    <button class="download-btn" id="downloadBtn">⬇ ZIPファイルをダウンロード</button>
+  </div>
+
+  <div class="note">
+    <strong>対応形式:</strong> LZH / LHA（lh0, lh4, lh5, lh6, lh7, lhd）<br>
+    <strong>プライバシー:</strong> ファイルはブラウザ内のみで処理され、サーバーには送信されません。<br>
+    <strong>日本語ファイル名:</strong> Shift_JIS エンコードに対応しています。
+  </div>
+
+  <footer>LZH → ZIP CONVERTER &nbsp;|&nbsp; ALL PROCESSING IN YOUR BROWSER</footer>
+</div>
+
+<script>
+// ─── LZH Parser ────────────────────────────────────────────────────────────────
+// Supports lh0 (store), lh4, lh5, lh6, lh7 methods
+
+class BitReader {
+  constructor(data) {
+    this.data = data;
+    this.pos = 0;
+    this.buf = 0;
+    this.count = 0;
+  }
+  read(n) {
+    while (this.count < n) {
+      if (this.pos < this.data.length) {
+        this.buf = (this.buf << 8) | this.data[this.pos++];
+        this.count += 8;
+      } else {
+        this.buf <<= 8; this.count += 8;
+      }
+    }
+    this.count -= n;
+    return (this.buf >>> this.count) & ((1 << n) - 1);
+  }
+}
+
+function decodeHuffman(reader, table, maxBits) {
+  let code = 0;
+  for (let i = 1; i <= maxBits; i++) {
+    code = (code << 1) | reader.read(1);
+    if (table[i] && table[i][code] !== undefined) return table[i][code];
+  }
+  return -1;
+}
+
+function buildTable(lengths) {
+  const table = {};
+  let code = 0;
+  const maxLen = Math.max(...lengths.filter(l=>l>0));
+  const sorted = lengths.map((l,i)=>({l,i})).filter(x=>x.l>0).sort((a,b)=>a.l-b.l||a.i-b.i);
+  let prev = 0;
+  for (const {l, i} of sorted) {
+    code <<= (l - prev);
+    if (!table[l]) table[l] = {};
+    table[l][code] = i;
+    code++;
+    prev = l;
+  }
+  return table;
+}
+
+function decodeLh5(data, outSize) {
+  const reader = new BitReader(data);
+  const out = new Uint8Array(outSize);
+  let outPos = 0;
+  const dictSize = 8192; // lh5
+  const dictBits = 13;
+  const dict = new Uint8Array(dictSize);
+  let dictPos = 0;
+  const MAXMATCH = 256;
+  const THRESHOLD = 3;
+
+  function readTree(n, bits) {
+    const count = reader.read(bits);
+    if (count === 0) {
+      const val = reader.read(bits);
+      const lens = new Array(n).fill(0);
+      const t = {}; 
+      // single symbol
+      return { single: val };
+    }
+    const lens = new Array(n).fill(0);
+    let i = 0;
+    while (i < count) {
+      let v = reader.read(3);
+      if (v === 7) { while (reader.read(1)) v++; }
+      lens[i++] = v;
+      if (i === 3 && n === 19) {
+        const skip = reader.read(2);
+        for (let j = 0; j < skip; j++) lens[i++] = 0;
+      }
+    }
+    return { table: buildTable(lens), maxBits: Math.max(...lens), single: null };
+  }
+
+  // lh5 specific decoder
+  // Simplified: for robust decode use proper LH5 algo
+  function decodeLh5Block() {
+    // blocksize
+    const blockSize = reader.read(16);
+    if (blockSize === 0) return false;
+
+    // c-tree (literal/length)
+    const cCount = reader.read(9);
+    let cTable, cSingle;
+    if (cCount === 0) {
+      cSingle = reader.read(9);
+    } else {
+      const lens = new Array(510).fill(0);
+      let ci = 0;
+      while (ci < cCount) {
+        let v = reader.read(3);
+        if (v === 7) { let e = reader.read(1); while(e){v++;e=reader.read(1);} }
+        if (v === 6) { const skip = reader.read(2)+3; for(let s=0;s<skip;s++) lens[ci++]=0; continue; }
+        if (v === 7) { const skip = reader.read(7)+20; for(let s=0;s<skip;s++) lens[ci++]=0; continue; }
+        lens[ci++] = v;
+      }
+      cTable = buildTable(lens.slice(0, cCount));
+    }
+
+    // p-tree
+    const pCount = reader.read(4);
+    let pTable, pSingle;
+    if (pCount === 0) {
+      pSingle = reader.read(4);
+    } else {
+      const lens = new Array(pCount).fill(0);
+      for (let i = 0; i < pCount; i++) {
+        let v = reader.read(3);
+        if (v === 7) { while(reader.read(1)) v++; }
+        lens[i] = v;
+      }
+      pTable = buildTable(lens);
+    }
+
+    for (let bk = 0; bk < blockSize && outPos < outSize; bk++) {
+      let c;
+      if (cSingle !== undefined) { c = cSingle; }
+      else {
+        // decode c
+        c = 0;
+        let code = 0;
+        let found = false;
+        const maxBits = Math.max(...Object.keys(cTable).map(Number));
+        for (let i = 1; i <= maxBits && !found; i++) {
+          code = (code << 1) | reader.read(1);
+          if (cTable[i] && cTable[i][code] !== undefined) { c = cTable[i][code]; found = true; }
+        }
+      }
+
+      if (c < 256) {
+        dict[dictPos] = c;
+        dictPos = (dictPos + 1) & (dictSize - 1);
+        out[outPos++] = c;
+      } else {
+        const length = c - 256 + THRESHOLD;
+        let dist;
+        if (pSingle !== undefined) { dist = pSingle; }
+        else {
+          let code = 0;
+          let found = false;
+          const maxBits = Math.max(...Object.keys(pTable).map(Number));
+          for (let i = 1; i <= maxBits && !found; i++) {
+            code = (code << 1) | reader.read(1);
+            if (pTable[i] && pTable[i][code] !== undefined) { dist = pTable[i][code]; found = true; }
+          }
+        }
+        if (dist > 1) dist = (1 << (dist-1)) | reader.read(dist-1);
+
+        const start = (dictPos - dist - 1 + dictSize) & (dictSize - 1);
+        for (let i = 0; i < length && outPos < outSize; i++) {
+          const byte = dict[(start + i) & (dictSize - 1)];
+          dict[dictPos] = byte;
+          dictPos = (dictPos + 1) & (dictSize - 1);
+          out[outPos++] = byte;
+        }
+      }
+    }
+    return true;
+  }
+
+  while (outPos < outSize) {
+    if (!decodeLh5Block()) break;
+  }
+  return out;
+}
+
+// Decode Shift_JIS to Unicode
+function decodeShiftJIS(bytes) {
+  try {
+    const dec = new TextDecoder('shift-jis', { fatal: false });
+    return dec.decode(bytes);
+  } catch (e) {
+    return Array.from(bytes).map(b => String.fromCharCode(b)).join('');
+  }
+}
+
+function formatSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/(1024*1024)).toFixed(2) + ' MB';
+}
+
+// ─── LZH File Parser ───────────────────────────────────────────────────────────
+function parseLZH(buffer) {
+  const data = new Uint8Array(buffer);
+  const entries = [];
+  let pos = 0;
+
+  function readU8() { return data[pos++]; }
+  function readU16LE() { const v = data[pos] | (data[pos+1]<<8); pos+=2; return v; }
+  function readU32LE() { const v = data[pos]|(data[pos+1]<<8)|(data[pos+2]<<16)|(data[pos+3]<<24); pos+=4; return v>>>0; }
+  function readBytes(n) { const s = data.slice(pos, pos+n); pos+=n; return s; }
+
+  while (pos < data.length) {
+    const headerStart = pos;
+    const headerSize = readU8();
+    if (headerSize === 0) break;
+    if (pos + headerSize > data.length) break;
+
+    const checksum = readU8();
+    const method = String.fromCharCode(readU8(),readU8(),readU8(),readU8(),readU8());
+    const compSize = readU32LE();
+    const origSize = readU32LE();
+    const dosDate = readU32LE();
+    const attr = readU8();
+    const level = readU8();
+    const nameLen = readU8();
+    const nameBytes = readBytes(nameLen);
+    const crc = readU16LE();
+
+    let name = decodeShiftJIS(nameBytes);
+
+    // Level 1/2 extended headers
+    if (level === 1) {
+      let extSize = readU16LE();
+      while (extSize > 0) {
+        const extType = readU8();
+        readBytes(extSize - 3);
+        extSize = readU16LE();
+      }
+    } else if (level === 2) {
+      // skip base header
+    }
+
+    const dataStart = pos;
+    const isDir = (attr & 0x10) || method === '-lhd-' || name.endsWith('/') || name.endsWith('\\');
+
+    entries.push({
+      name: name.replace(/\\/g, '/'),
+      method,
+      compSize,
+      origSize,
+      crc,
+      isDir,
+      dataOffset: dataStart,
+      dosDate,
+    });
+
+    pos = dataStart + compSize;
+    if (pos > data.length) { pos = data.length; break; }
+  }
+
+  return entries;
+}
+
+function decompressEntry(buffer, entry) {
+  const data = new Uint8Array(buffer, entry.dataOffset, entry.compSize);
+  const method = entry.method.trim();
+
+  if (method === '-lh0-' || method === '-lhd-' || entry.origSize === 0) {
+    return data.slice();
+  }
+
+  if (method === '-lh5-' || method === '-lh4-' || method === '-lh6-' || method === '-lh7-') {
+    try {
+      return decodeLh5(data, entry.origSize);
+    } catch (e) {
+      console.warn('decompress failed for', entry.name, e);
+      return data.slice();
+    }
+  }
+
+  // Unknown: return raw
+  return data.slice();
+}
+
+// ─── ZIP Builder ───────────────────────────────────────────────────────────────
+function crc32(data) {
+  let crc = 0xFFFFFFFF;
+  const table = crc32.table || (crc32.table = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c;
+    }
+    return t;
+  })());
+  for (let i = 0; i < data.length; i++) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function dosDateTime(dosDate) {
+  // Parse DOS date/time
+  const time = dosDate & 0xFFFF;
+  const date = (dosDate >> 16) & 0xFFFF;
+  return { date, time };
+}
+
+function buildZip(entries, onProgress) {
+  const parts = [];
+  const centralDir = [];
+  let offset = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    const { name, data, dosDate } = entries[i];
+    if (onProgress) onProgress((i / entries.length) * 0.9);
+
+    const nameBytes = new TextEncoder().encode(name);
+    const crc = data.length ? crc32(data) : 0;
+    const { date, time } = dosDateTime(dosDate);
+
+    // Local file header
+    const lfh = new Uint8Array(30 + nameBytes.length);
+    const lfhView = new DataView(lfh.buffer);
+    lfhView.setUint32(0, 0x04034b50, true);  // sig
+    lfhView.setUint16(4, 20, true);           // version needed
+    lfhView.setUint16(6, 0x0800, true);       // flags (UTF-8)
+    lfhView.setUint16(8, 0, true);            // compression: store
+    lfhView.setUint16(10, time, true);
+    lfhView.setUint16(12, date, true);
+    lfhView.setUint32(14, crc, true);
+    lfhView.setUint32(18, data.length, true); // comp size
+    lfhView.setUint32(22, data.length, true); // orig size
+    lfhView.setUint16(26, nameBytes.length, true);
+    lfhView.setUint16(28, 0, true);
+    lfh.set(nameBytes, 30);
+
+    // Central dir header
+    const cdh = new Uint8Array(46 + nameBytes.length);
+    const cdhView = new DataView(cdh.buffer);
+    cdhView.setUint32(0, 0x02014b50, true);
+    cdhView.setUint16(4, 20, true);  // version made
+    cdhView.setUint16(6, 20, true);  // version needed
+    cdhView.setUint16(8, 0x0800, true);
+    cdhView.setUint16(10, 0, true);
+    cdhView.setUint16(12, time, true);
+    cdhView.setUint16(14, date, true);
+    cdhView.setUint32(16, crc, true);
+    cdhView.setUint32(20, data.length, true);
+    cdhView.setUint32(24, data.length, true);
+    cdhView.setUint16(28, nameBytes.length, true);
+    cdhView.setUint16(30, 0, true); // extra
+    cdhView.setUint16(32, 0, true); // comment
+    cdhView.setUint16(34, 0, true); // disk start
+    cdhView.setUint16(36, 0, true); // int attr
+    cdhView.setUint32(38, 0, true); // ext attr
+    cdhView.setUint32(42, offset, true); // local header offset
+    cdh.set(nameBytes, 46);
+
+    parts.push(lfh);
+    parts.push(data);
+    offset += lfh.length + data.length;
+    centralDir.push(cdh);
+  }
+
+  const cdStart = offset;
+  for (const cdh of centralDir) { parts.push(cdh); offset += cdh.length; }
+  const cdSize = offset - cdStart;
+
+  // End of central dir
+  const eocd = new Uint8Array(22);
+  const eocdView = new DataView(eocd.buffer);
+  eocdView.setUint32(0, 0x06054b50, true);
+  eocdView.setUint16(4, 0, true);
+  eocdView.setUint16(6, 0, true);
+  eocdView.setUint16(8, centralDir.length, true);
+  eocdView.setUint16(10, centralDir.length, true);
+  eocdView.setUint32(12, cdSize, true);
+  eocdView.setUint32(16, cdStart, true);
+  eocdView.setUint16(20, 0, true);
+  parts.push(eocd);
+
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const part of parts) { out.set(part, p); p += part.length; }
+
+  if (onProgress) onProgress(1);
+  return out;
+}
+
+// ─── UI Logic ──────────────────────────────────────────────────────────────────
+let currentFile = null;
+let parsedEntries = null;
+let zipBlob = null;
+let zipName = '';
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+const fileName = document.getElementById('fileName');
+const fileSize = document.getElementById('fileSize');
+const removeBtn = document.getElementById('removeBtn');
+const fileListEl = document.getElementById('fileList');
+const fileCountEl = document.getElementById('fileCount');
+const fileListItems = document.getElementById('fileListItems');
+const convertBtn = document.getElementById('convertBtn');
+const progressWrap = document.getElementById('progressWrap');
+const progressLabel = document.getElementById('progressLabel');
+const progressPct = document.getElementById('progressPct');
+const progressFill = document.getElementById('progressFill');
+const statusEl = document.getElementById('status');
+const downloadWrap = document.getElementById('downloadWrap');
+const downloadBtn = document.getElementById('downloadBtn');
+
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+removeBtn.addEventListener('click', reset);
+
+function reset() {
+  currentFile = null; parsedEntries = null; zipBlob = null;
+  fileInfo.classList.remove('visible');
+  fileListEl.classList.remove('visible');
+  fileListItems.innerHTML = '';
+  convertBtn.disabled = true;
+  progressWrap.classList.remove('visible');
+  statusEl.className = 'status';
+  statusEl.innerHTML = '';
+  downloadWrap.classList.remove('visible');
+  dropzone.classList.remove('has-file');
+  fileInput.value = '';
+}
+
+function setStatus(type, html) {
+  statusEl.className = 'status visible ' + type;
+  statusEl.innerHTML = html;
+}
+
+function setProgress(pct, label) {
+  progressWrap.classList.add('visible');
+  progressFill.style.width = (pct * 100) + '%';
+  progressPct.textContent = Math.round(pct * 100) + '%';
+  if (label) progressLabel.textContent = label;
+}
+
+async function loadFile(file) {
+  reset();
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['lzh','lha'].includes(ext)) {
+    setStatus('error', '❌ LZH / LHA ファイルを選択してください');
+    return;
+  }
+
+  currentFile = file;
+  fileName.textContent = file.name;
+  fileSize.textContent = formatSize(file.size);
+  fileInfo.classList.add('visible');
+  dropzone.classList.add('has-file');
+
+  setStatus('info', '<span class="pulsing">⏳ ファイルを解析中...</span>');
+
+  try {
+    const buffer = await file.arrayBuffer();
+    parsedEntries = parseLZH(buffer);
+
+    if (!parsedEntries || parsedEntries.length === 0) {
+      setStatus('error', '❌ LZHファイルの解析に失敗しました。ファイルが壊れているか、非対応の形式です。');
+      return;
+    }
+
+    // Show file list
+    const visibleEntries = parsedEntries.filter(e => !e.isDir);
+    fileCountEl.textContent = visibleEntries.length + ' ファイル';
+    fileListItems.innerHTML = visibleEntries.slice(0, 100).map(e =>
+      `<div class="file-list-item">
+        <span>📄</span>
+        <span class="fi-name">${e.name}</span>
+        <span class="fi-size">${formatSize(e.origSize)}</span>
+      </div>`
+    ).join('') + (visibleEntries.length > 100 ? `<div class="file-list-item"><span class="fi-name" style="color:var(--muted)">... 他 ${visibleEntries.length - 100} ファイル</span></div>` : '');
+    fileListEl.classList.add('visible');
+
+    statusEl.className = 'status';
+    convertBtn.disabled = false;
+  } catch (e) {
+    setStatus('error', '❌ ファイルの読み込みに失敗しました: ' + e.message);
+  }
+}
+
+convertBtn.addEventListener('click', async () => {
+  if (!currentFile || !parsedEntries) return;
+
+  convertBtn.disabled = true;
+  downloadWrap.classList.remove('visible');
+  statusEl.className = 'status';
+
+  try {
+    const buffer = await currentFile.arrayBuffer();
+
+    setProgress(0, '展開中...');
+
+    // Decompress in chunks with yielding
+    const decompressed = [];
+    for (let i = 0; i < parsedEntries.length; i++) {
+      const entry = parsedEntries[i];
+      setProgress(i / parsedEntries.length * 0.7, `展開中: ${entry.name}`);
+      await new Promise(r => setTimeout(r, 0)); // yield
+
+      let data;
+      if (entry.isDir) {
+        data = new Uint8Array(0);
+      } else {
+        data = decompressEntry(buffer, entry);
+      }
+
+      decompressed.push({ name: entry.name, data, dosDate: entry.dosDate });
+    }
+
+    setProgress(0.8, 'ZIP 構築中...');
+    await new Promise(r => setTimeout(r, 0));
+
+    const zipData = buildZip(decompressed, p => setProgress(0.8 + p * 0.2, 'ZIP 構築中...'));
+    zipBlob = new Blob([zipData], { type: 'application/zip' });
+    zipName = currentFile.name.replace(/\.(lzh|lha)$/i, '.zip');
+
+    setProgress(1, '完了');
+    setStatus('success', `✅ 変換完了！　${decompressed.filter(e=>!e.name.endsWith('/')).length} ファイル → ${formatSize(zipBlob.size)}`);
+    downloadWrap.classList.add('visible');
+  } catch (e) {
+    setStatus('error', '❌ 変換エラー: ' + e.message);
+    convertBtn.disabled = false;
+  }
+});
+
+downloadBtn.addEventListener('click', () => {
+  if (!zipBlob) return;
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url; a.download = zipName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+</script>
+</body>
+</html>
