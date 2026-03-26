@@ -481,7 +481,60 @@
 <script>
 // ─── LZH Parser ────────────────────────────────────────────────────────────────
 // Supports lh0 (store), lh4, lh5, lh6, lh7 methods
+function readCodeLengths(reader, total) {
+  const lengths = [];
+  let i = 0;
 
+  while (i < total) {
+    let c = reader.read(3);
+
+    if (c === 0) {
+      lengths[i++] = 0;
+    } else if (c === 1) {
+      const n = reader.read(4) + 3;
+      for (let j = 0; j < n; j++) lengths[i++] = 0;
+    } else if (c === 2) {
+      const n = reader.read(9) + 20;
+      for (let j = 0; j < n; j++) lengths[i++] = 0;
+    } else {
+      lengths[i++] = c;
+    }
+  }
+
+  return lengths;
+}
+function buildHuffman(lengths) {
+  const table = {};
+  let code = 0;
+  let prevLen = 0;
+
+  const list = lengths
+    .map((l, i) => ({ l, i }))
+    .filter(x => x.l > 0)
+    .sort((a, b) => a.l - b.l || a.i - b.i);
+
+  for (const { l, i } of list) {
+    code <<= (l - prevLen);
+    if (!table[l]) table[l] = {};
+    table[l][code] = i;
+    code++;
+    prevLen = l;
+  }
+
+  return table;
+}
+function decodeSymbol(reader, table) {
+  let code = 0;
+
+  for (let len = 1; len <= 16; len++) {
+    code = (code << 1) | reader.read(1);
+    if (table[len] && table[len][code] !== undefined) {
+      return table[len][code];
+    }
+  }
+
+  throw new Error("Invalid Huffman code");
+}
 class BitReader {
   constructor(data) {
     this.data = data;
